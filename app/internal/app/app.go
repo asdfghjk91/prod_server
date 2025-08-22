@@ -2,6 +2,7 @@ package app
 
 import (
 	"app/internal/config"
+	"app/pkg/common/logging"
 	"app/pkg/metric"
 	"context"
 	"errors"
@@ -25,22 +26,24 @@ type App struct {
 	cfg        *config.Config
 	router     *httprouter.Router
 	httpServer *http.Server
+	logger     *logging.Logger
 }
 
-func NewApp(config *config.Config) (App, error) {
-	log.Println("router init")
+func NewApp(config *config.Config, logger *logging.Logger) (App, error) {
+	logger.Println("router init")
 	router := httprouter.New()
 
-	log.Println("swagger docs init")
+	logger.Println("swagger docs init")
 	router.Handler(http.MethodGet, "/swagger", http.RedirectHandler("/swagger/index.html", http.StatusMovedPermanently))
 	router.Handler(http.MethodGet, "/swagger/*any", httpSwagger.WrapHandler)
 
-	log.Println("heartbeat metric initializing")
+	logger.Println("heartbeat metric initializing")
 	metricHandler := metric.Handler{}
 	metricHandler.Register(router)
 
 	return App{
 		cfg:    config,
+		logger: logger,
 		router: router,
 	}, nil
 }
@@ -50,14 +53,14 @@ func (a *App) Run() {
 }
 
 func (a *App) startHTTP() {
-	log.Print("start http")
+	a.logger.Info("start http")
 
 	var listener net.Listener
 
 	if a.cfg.Listen.Type == config.LISTEN_TYPE_SOCK {
 		appDir, err := filepath.Abs((filepath.Dir(os.Args[0])))
 		if err != nil {
-			log.Fatal(err)
+			a.logger.Fatal(err)
 		}
 		socketPath := path.Join(appDir, a.cfg.Listen.SocketFile)
 
@@ -66,14 +69,14 @@ func (a *App) startHTTP() {
 
 		listener, err = net.Listen("unix", socketPath)
 		if err != nil {
-			log.Fatal(err)
+			a.logger.Fatal(err)
 		}
 	} else {
 		log.Printf("bind application to host: %s and port: %s", a.cfg.Listen.BindIP, a.cfg.Listen.Port)
 		var err error
 		listener, err = net.Listen("tcp", fmt.Sprintf("%s:%s", a.cfg.Listen.BindIP, a.cfg.Listen.Port))
 		if err != nil {
-			log.Fatal(err)
+			a.logger.Fatal(err)
 		}
 	}
 
@@ -95,18 +98,18 @@ func (a *App) startHTTP() {
 		ReadTimeout:  15 * time.Second,
 	}
 
-	log.Println("application completely initialized and started")
+	a.logger.Println("application completely initialized and started")
 
 	if err := a.httpServer.Serve(listener); err != nil {
 		switch {
 		case errors.Is(err, http.ErrServerClosed):
-			log.Print("server shutdown")
+			a.logger.Warn("server shutdown")
 		default:
-			log.Fatal(err)
+			a.logger.Fatal(err)
 		}
 	}
 	err := a.httpServer.Shutdown(context.Background())
 	if err != nil {
-		log.Fatal(err)
+		a.logger.Fatal(err)
 	}
 }
