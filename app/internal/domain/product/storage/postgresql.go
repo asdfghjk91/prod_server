@@ -11,22 +11,12 @@ import (
 type ProductStorage struct {
 	queryBuilder sq.StatementBuilderType
 	client       PostgresSQLClient
-	logger       *logging.Logger
 }
 
-func (s *ProductStorage) queryLogger(sql, table string, args []interface{}) *logging.Logger {
-	return s.logger.ExtraFields(map[string]interface{}{
-		"sql":   sql,
-		"table": table,
-		"args":  args,
-	})
-}
-
-func NewProductStorage(client PostgresSQLClient, logger *logging.Logger) ProductStorage {
+func NewProductStorage(client PostgresSQLClient) ProductStorage {
 	return ProductStorage{
 		queryBuilder: sq.StatementBuilder.PlaceholderFormat(sq.Dollar),
 		client:       client,
-		logger:       logger,
 	}
 }
 
@@ -48,7 +38,11 @@ func (s *ProductStorage) All(ctx context.Context) ([]model.Product, error) {
 		From(scheme + "." + table)
 
 	sql, args, err := query.ToSql()
-	logger := s.queryLogger(sql, table, args)
+	logger := logging.GetLogger(ctx).WithFields(map[string]interface{}{
+		"sql":   sql,
+		"table": table,
+		"args":  args,
+	})
 	if err != nil {
 		logger.Error("failed to create SQL Query due to error: %v", err)
 		return nil, err

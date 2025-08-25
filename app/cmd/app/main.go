@@ -4,21 +4,26 @@ import (
 	"app/internal/app"
 	"app/internal/config"
 	"app/pkg/common/logging"
-	"log"
+	"context"
 )
 
 func main() {
-	log.Print("config initializing")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logger := logging.GetLogger(ctx)
+
+	logger.Info("config initializing")
 	cfg := config.GetConfig()
 
-	log.Print("logger initializing but does not exist in the project")
-	logger := logging.GetLogger(cfg.AppConfig.LogLevel)
+	ctx = logging.ContextWithLogger(ctx, logger)
 
-	a, err := app.NewApp(cfg, &logger)
+	a, err := app.NewApp(ctx, cfg)
 	if err != nil {
-		logger.Fatal((err))
+		logger.Fatalln(err)
 	}
 
-	logger.Println("Running application")
-	a.Run()
+	logger.Info("Running application")
+	a.Run(ctx)
 }
