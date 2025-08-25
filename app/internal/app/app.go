@@ -2,6 +2,9 @@ package app
 
 import (
 	"app/internal/config"
+	"app/internal/domain/product/storage"
+	"app/pkg/client/postgresql"
+	"app/pkg/client/postgresql/adapter"
 	"app/pkg/common/logging"
 	"app/pkg/metric"
 	"context"
@@ -17,6 +20,7 @@ import (
 
 	_ "app/docs"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/julienschmidt/httprouter"
 	"github.com/rs/cors"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -27,6 +31,7 @@ type App struct {
 	router     *httprouter.Router
 	httpServer *http.Server
 	logger     *logging.Logger
+	pgClient   *pgxpool.Pool
 }
 
 func NewApp(config *config.Config, logger *logging.Logger) (App, error) {
@@ -41,10 +46,29 @@ func NewApp(config *config.Config, logger *logging.Logger) (App, error) {
 	metricHandler := metric.Handler{}
 	metricHandler.Register(router)
 
+	pgConfig := postgresql.NewPgConfig(
+		config.PostgresqSQL.Username, config.PostgresqSQL.Password,
+		config.PostgresqSQL.Host, config.PostgresqSQL.Port, config.PostgresqSQL.Database,
+	)
+
+	pgClient, err := postgresql.NewClient(context.Background(), 5, time.Second*5, pgConfig)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	db := adapter.New(pgClient) // ← оборачиваем пул
+	productStorage := storage.NewProductStorage(db, logger)
+	all, err := productStorage.All(context.Background())
+	if err != nil {
+		logger.Fatal(err)
+	}
+	logger.Fatal(all)
+
 	return App{
-		cfg:    config,
-		logger: logger,
-		router: router,
+		cfg:      config,
+		logger:   logger,
+		router:   router,
+		pgClient: pgClient,
 	}, nil
 }
 
