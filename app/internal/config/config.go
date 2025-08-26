@@ -1,8 +1,11 @@
 package config
 
 import (
+	"flag"
 	"log"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
 )
@@ -10,7 +13,23 @@ import (
 type Config struct {
 	IsDebug       bool `env:"IS_DEBUG" env-default:"false"` // режим отладки
 	IsDevelopment bool `env:"IS_DEV" env-default:"false"`   // режим разработчика
-	Listen        struct {
+	HTTP          struct {
+		IP           string        `yaml:"ip" env:"HTTP-IP"`
+		Port         int           `yaml:"ip" env:"HTTP-PORT"`
+		ReadTimeout  time.Duration `yaml:"ip" env:"HTTP-READ-TIMEOUT"`
+		WriteTimeout time.Duration `yaml:"ip" env:"HTTP-WRITE-TIMEOUT"`
+		CORS         struct {
+			AllowedMethods     []string `yaml: "allowed_methods" env:"HTTP-CORS-ALLOWEDMETHODS"`
+			AllowedOrigins     []string `yaml: "allowed_origins" env:"HTTP-CORS-ALLOWEDORIGINS"`
+			AllowCredentials   bool     `yaml: "allowed_credentials" env:"HTTP-CORS-ALLOWCREDENTIALS"`
+			AllowedHeaders     []string `yaml: "allowed_headers" env:"HTTP-CORS-ALLOWEDHEADERS"`
+			OptionsPassthrough bool     `yaml: "options_passthrough" env:"HTTP-CORS-OPTIONSPASSTHROUGH"`
+			ExposedHeaders     []string `yaml: "exposed_headers" env:"HTTP-CORS-EXPOSEDHEADERS"`
+			Debug              bool     `yaml: "debug" env:"HTTP-CORS-DEBUG"`
+		} `yaml: "cors"`
+	}
+
+	Listen struct {
 		Type       string `env:"LISTEN_TYPE" env-default:"port" env-description:"port or sock. If sock then env SOCKET_FILE env is required"` // как слушать port или socket
 		BindIP     string `env:"BIND_IP" env-default:"0.0.0.0"`                                                                               // IP сервера (0.0.0.0 на все интерфейсы)
 		Port       string `env:"PORT" env-default:9090`                                                                                       // порт для запуска
@@ -33,17 +52,33 @@ type Config struct {
 	}
 }
 
+const (
+	EnvConfigPathName  = "CONFIG-PATH"
+	FlagConfigPathName = "config"
+)
+
+var configPath string
 var instance *Config
 var once sync.Once
 
 func GetConfig() *Config {
 	once.Do(func() {
-		log.Print("gather config")
+		flag.StringVar(&configPath, FlagConfigPathName, "configs/config.local.yaml", "this app config file")
+		flag.Parse()
 
+		log.Print("config init")
+
+		if configPath == "" {
+			configPath = os.Getenv(EnvConfigPathName)
+		}
+
+		if configPath == "" {
+			log.Fatalf("config path is required")
+		}
 		instance = &Config{}
 
 		if err := cleanenv.ReadEnv(instance); err != nil {
-			helpText := "The Art of Development - Monolith Notes System"
+			helpText := "The Art of Development - Production Service"
 			help, _ := cleanenv.GetDescription(instance, &helpText)
 			log.Print(help)
 			log.Fatal(err)

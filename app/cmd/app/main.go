@@ -5,9 +5,12 @@ import (
 	"app/internal/config"
 	"app/pkg/common/logging"
 	"context"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	_ = godotenv.Load() // подхватит .env, если есть
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

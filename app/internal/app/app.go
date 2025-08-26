@@ -10,12 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
-	"os"
-	"path"
-	"path/filepath"
 	"time"
 
 	_ "app/docs"
@@ -24,6 +20,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"github.com/rs/cors"
 	httpSwagger "github.com/swaggo/http-swagger"
+	"golang.org/x/sync/errgroup"
 )
 
 type App struct {
@@ -50,7 +47,7 @@ func NewApp(ctx context.Context, config *config.Config) (App, error) {
 		config.PostgresqSQL.Host, config.PostgresqSQL.Port, config.PostgresqSQL.Database,
 	)
 
-	pgClient, err := postgresql.NewClient(context.Background(), 5, time.Second*5, pgConfig)
+	pgClient, err := postgresql.NewClient(ctx, 5, time.Second*5, pgConfig)
 	if err != nil {
 		logging.GetLogger(ctx).Fatal(err)
 	}
@@ -70,54 +67,52 @@ func NewApp(ctx context.Context, config *config.Config) (App, error) {
 	}, nil
 }
 
-func (a *App) Run(ctx context.Context) {
-	a.startHTTP(ctx)
+func (a *App) Run(ctx context.Context) error {
+	grp, ctx := errgroup.WithContext(ctx)
+	grp.Go(func() error {
+		return a.startHTTP(ctx)
+	})
+	logging.GetLogger(ctx).Info("application init and start")
+	return grp.Wait()
 }
 
-func (a *App) startHTTP(ctx context.Context) {
-	logging.GetLogger(ctx).Info("start http")
+func (a *App) startHTTP(ctx context.Context) error {
+	logging.GetLogger(ctx).WithFields(map[string]interface{}{
+		"IP":   a.cfg.HTTP.IP,
+		"Port": a.cfg.HTTP.Port,
+	})
 
-	var listener net.Listener
-
-	if a.cfg.Listen.Type == config.LISTEN_TYPE_SOCK {
-		appDir, err := filepath.Abs((filepath.Dir(os.Args[0])))
-		if err != nil {
-			logging.GetLogger(ctx).Fatal(err)
-		}
-		socketPath := path.Join(appDir, a.cfg.Listen.SocketFile)
-
-		log.Printf("socket path: %s", socketPath)
-		log.Printf("create and listen unix socket")
-
-		listener, err = net.Listen("unix", socketPath)
-		if err != nil {
-			logging.GetLogger(ctx).Fatal(err)
-		}
-	} else {
-		log.Printf("bind application to host: %s and port: %s", a.cfg.Listen.BindIP, a.cfg.Listen.Port)
-		var err error
-		listener, err = net.Listen("tcp", fmt.Sprintf("%s:%s", a.cfg.Listen.BindIP, a.cfg.Listen.Port))
-		if err != nil {
-			logging.GetLogger(ctx).Fatal(err)
-		}
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s: %d", a.cfg.HTTP.IP, a.cfg.HTTP.Port))
+	if err != nil {
+		logging.GetLogger(ctx).WithError(err).Fatal("failed to create listener")
 	}
 
+	logging.GetLogger(ctx).WithFields(map[string]interface{}{
+		"AllowedMethods":     a.cfg.HTTP.CORS.AllowedMethods,
+		"AllowedOrigins":     a.cfg.HTTP.CORS.AllowedOrigins,
+		"AllowCredentials":   a.cfg.HTTP.CORS.AllowCredentials,
+		"AllowedHeaders":     a.cfg.HTTP.CORS.AllowedHeaders,
+		"OptionsPassthrough": a.cfg.HTTP.CORS.OptionsPassthrough,
+		"ExposedHeaders":     a.cfg.HTTP.CORS.ExposedHeaders,
+		"Debug":              a.cfg.HTTP.CORS.Debug,
+	})
+
 	c := cors.New(cors.Options{
-		AllowedMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodOptions, http.MethodDelete},
-		AllowedOrigins:     []string{"http://172.28.1.87:3000", "http://172.28.1.87:8080"},
-		AllowCredentials:   true,
-		AllowedHeaders:     []string{"Location", "Charset", "Access-Control-Allow-Origin", "Content-Type", "content-type", "Origin", "Accept", "Content-Length", "Accept-Encoding", "X-CSRF-Token"},
-		OptionsPassthrough: true,
-		ExposedHeaders:     []string{"Location", "Authorization", "Content-Disposition"},
-		Debug:              false,
+		AllowedMethods:     a.cfg.HTTP.CORS.AllowedMethods,
+		AllowedOrigins:     a.cfg.HTTP.CORS.AllowedOrigins,
+		AllowCredentials:   a.cfg.HTTP.CORS.AllowCredentials,
+		AllowedHeaders:     a.cfg.HTTP.CORS.AllowedHeaders,
+		OptionsPassthrough: a.cfg.HTTP.CORS.OptionsPassthrough,
+		ExposedHeaders:     a.cfg.HTTP.CORS.ExposedHeaders,
+		Debug:              a.cfg.HTTP.CORS.Debug,
 	})
 
 	handler := c.Handler(a.router)
 
 	a.httpServer = &http.Server{
 		Handler:      handler,
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout:  15 * time.Second,
+		WriteTimeout: a.cfg.HTTP.WriteTimeout,
+		ReadTimeout:  a.cfg.HTTP.ReadTimeout,
 	}
 
 	logging.GetLogger(ctx).Info("application completely initialized and started")
@@ -130,8 +125,9 @@ func (a *App) startHTTP(ctx context.Context) {
 			logging.GetLogger(ctx).Fatal(err)
 		}
 	}
-	err := a.httpServer.Shutdown(context.Background())
+	err = a.httpServer.Shutdown(context.Background())
 	if err != nil {
 		logging.GetLogger(ctx).Fatal(err)
 	}
+	return err
 }
